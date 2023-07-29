@@ -1,12 +1,15 @@
 //! In this file we manage the DHCP specific data types and parsing
 
-use crate::types::{ClientIdentifier, DhcpOption, DhcpOptionList, MessageType, ParameterRequest};
+use crate::types::{
+    ClientIdentifier, DhcpOption, DhcpOptionList, MacAddr, MessageType, ParameterRequest,
+};
 use crate::UDP_BUFFER_SIZE;
-use crate::{AddressPool, Error, Result};
-use std::sync::{Arc, Mutex};
+use crate::{AddrPool, Error, Result};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// A [Dhcp] represents a DHCP packet
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct Dhcp<'dhcp> {
     /// op - Operate Code of the message
     op_code: u8,
@@ -53,7 +56,7 @@ pub struct Dhcp<'dhcp> {
     file: [u8; 128],
 
     /// options - The variable length data after the magic
-    options: [Option<DhcpOption<'dhcp>>; Dhcp::MAX_DHCP_OPTIONS_LEN],
+    options: DhcpOptionList<'dhcp>,
 
     /// Required option that makes sense to store top level
     message_type: MessageType,
@@ -65,12 +68,10 @@ impl<'dhcp> Dhcp<'dhcp> {
     const MINIMUM_PAYLOAD_LENGTH: usize = 240;
     const OPTIONS_START: usize = 240;
     const OPTION_LEN_OFFSET: usize = 1;
-    const MAX_DHCP_OPTIONS_LEN: usize = 20;
     const REQUEST_OP_CODE: u8 = 1;
     const REPLY_OP_CODE: u8 = 2;
     const HW_TYPE_ETHERNET: u8 = 1;
     const HW_ADDRESS_LEN: u8 = 6;
-    const FLAG_BROADCAST: u8 = 1 << 7;
 
     /// Convert &[u8] from a UDP Packet into a more rust friendly Dhcp struct
     pub fn parse(data: &[u8]) -> Result<Self> {
@@ -90,29 +91,23 @@ impl<'dhcp> Dhcp<'dhcp> {
         }
 
         let mut message_type = MessageType::Unset;
-
         let mut option_ptr = Self::OPTIONS_START;
-        let mut options = [None; Self::MAX_DHCP_OPTIONS_LEN];
-        let mut options_counter = 0;
+        let mut options = DhcpOptionList::builder();
         loop {
             // The options pointer is out of bounds so we are done
             if option_ptr >= data_len {
-                break;
-            }
-            if options_counter >= Self::MAX_DHCP_OPTIONS_LEN {
                 break;
             }
 
             // We will store the option length so we can increment
             let mut option_len = 0;
 
-            // Fail if the len field is out of bounds
             let option_opcode: u8 = data[option_ptr];
 
             // Add the option to our array of options if we found one and
             // increment the counter
-            options[options_counter] = match option_opcode {
-                DhcpOption::PAD => Some(DhcpOption::Pad),
+            match option_opcode {
+                DhcpOption::PAD => _ = options.add(DhcpOption::Pad),
                 DhcpOption::MESSAGE_TYPE => {
                     option_len = *data
                         .get(option_ptr + Self::OPTION_LEN_OFFSET)
@@ -126,10 +121,7 @@ impl<'dhcp> Dhcp<'dhcp> {
 
                     if let Some(msg_type) = data.get(option_ptr) {
                         message_type = (*msg_type).try_into()?;
-                        None
-                    } else {
-                        None
-                    }
+                    };
                 }
                 DhcpOption::REQUESTED_IP_ADDR => {
                     option_len = *data
@@ -148,9 +140,7 @@ impl<'dhcp> Dhcp<'dhcp> {
                     if let Some(ip_addr_bytes) = ip_addr_bytes {
                         // We can unwap safetly here because we check above
                         let ip_addr = <[u8; 4]>::try_from(ip_addr_bytes).unwrap();
-                        Some(DhcpOption::RequestedIpAddr(ip_addr))
-                    } else {
-                        None
+                        options.add(DhcpOption::RequestedIpAddr(ip_addr));
                     }
                 }
                 DhcpOption::DHCP_SERVER_IP_ADDR => {
@@ -170,9 +160,7 @@ impl<'dhcp> Dhcp<'dhcp> {
                     if let Some(ip_addr_bytes) = ip_addr_bytes {
                         // We can unwap safetly here because we check above
                         let ip_addr = <[u8; 4]>::try_from(ip_addr_bytes).unwrap();
-                        Some(DhcpOption::DhcpServerIpAddr(ip_addr))
-                    } else {
-                        None
+                        options.add(DhcpOption::DhcpServerIpAddr(ip_addr));
                     }
                 }
                 DhcpOption::MAX_MESSAGE_SIZE => {
@@ -189,11 +177,10 @@ impl<'dhcp> Dhcp<'dhcp> {
 
                     let max_msg_size = data
                         .get(option_ptr..option_ptr + DhcpOption::MAX_MESSAGE_SIZE_LEN as usize);
+
                     if let Some(max_msg_size) = max_msg_size {
                         let max_msg_size = u16::from_be_bytes(max_msg_size.try_into().unwrap());
-                        Some(DhcpOption::MaxMessageSize(max_msg_size))
-                    } else {
-                        None
+                        options.add(DhcpOption::MaxMessageSize(max_msg_size));
                     }
                 }
                 DhcpOption::PARAMETER_REQUEST_LIST => {
@@ -222,9 +209,7 @@ impl<'dhcp> Dhcp<'dhcp> {
                             let req_param = (*param).into();
                             req_params[index] = Some(req_param);
                         }
-                        Some(DhcpOption::ParameterRequestList(req_params))
-                    } else {
-                        None
+                        options.add(DhcpOption::ParameterRequestList(req_params));
                     }
                 }
                 DhcpOption::VENDOR_CLASS_ID => {
@@ -245,9 +230,8 @@ impl<'dhcp> Dhcp<'dhcp> {
                         let mut option = [0u8; DhcpOption::MAX_VENDOR_CLASS_ID_LEN as usize];
                         option[..option_len as usize]
                             .copy_from_slice(&option_raw[..option_len as usize]);
-                        Some(DhcpOption::VendorClassIndentifier(option))
-                    } else {
-                        None
+
+                        options.add(DhcpOption::VendorClassIndentifier(option));
                     }
                 }
                 DhcpOption::CLIENT_SYSTEM_ARCH => {
@@ -267,9 +251,7 @@ impl<'dhcp> Dhcp<'dhcp> {
                     if let Some(option_raw) = option_raw {
                         let mut option = [0u8; DhcpOption::CLIENT_SYSTEM_ARCH_LEN as usize];
                         option.copy_from_slice(&option_raw[..option_len as usize]);
-                        Some(DhcpOption::ClientSystemArch(option))
-                    } else {
-                        None
+                        options.add(DhcpOption::ClientSystemArch(option));
                     }
                 }
                 DhcpOption::CLIENT_NET_DEV_INTERFACE => {
@@ -289,9 +271,7 @@ impl<'dhcp> Dhcp<'dhcp> {
                     if let Some(option_raw) = option_raw {
                         let mut option = [0u8; DhcpOption::CLIENT_NET_DEV_INTERFACE_LEN as usize];
                         option.copy_from_slice(&option_raw[..option_len as usize]);
-                        Some(DhcpOption::ClientNetworkDeviceInterface(option))
-                    } else {
-                        None
+                        options.add(DhcpOption::ClientNetworkDeviceInterface(option));
                     }
                 }
                 DhcpOption::CLIENT_ID => {
@@ -304,9 +284,9 @@ impl<'dhcp> Dhcp<'dhcp> {
                     let option_raw = &data[option_ptr..option_ptr + option_len as usize];
 
                     match ClientIdentifier::try_from(option_raw) {
-                        Ok(client_id) => Some(DhcpOption::ClientIdentifier(client_id)),
+                        Ok(client_id) => options.add(DhcpOption::ClientIdentifier(client_id)),
                         Err(err) => return Err(err),
-                    }
+                    };
                 }
                 DhcpOption::CLIENT_UID => {
                     option_len = *data
@@ -328,12 +308,11 @@ impl<'dhcp> Dhcp<'dhcp> {
                     if let Some(option_raw) = option_raw {
                         let mut option = [0u8; DhcpOption::MAX_CLIENT_UID_LEN as usize];
                         option.copy_from_slice(&option_raw[..option_len as usize]);
-                        Some(DhcpOption::ClientUid(option))
-                    } else {
-                        None
-                    }
+                        options.add(DhcpOption::ClientUid(option));
+                    };
                 }
-                DhcpOption::END => Some(DhcpOption::End),
+                DhcpOption::END => _ = options.add(DhcpOption::End),
+                // Catch options we have not defined
                 option => {
                     option_len = *data
                         .get(option_ptr + Self::OPTION_LEN_OFFSET)
@@ -342,8 +321,7 @@ impl<'dhcp> Dhcp<'dhcp> {
                     // Increment pointer to start of data
                     option_ptr += Self::OPTION_LEN_OFFSET + 1;
 
-                    dbg!("Unknown", option, data[option_ptr + 1]);
-                    None
+                    println!("Unknown Option: {option}");
                 }
             };
 
@@ -351,8 +329,6 @@ impl<'dhcp> Dhcp<'dhcp> {
             if option_opcode == DhcpOption::END {
                 break;
             }
-            // Increment counter past opcode
-            options_counter += 1;
             // Increment counter
             option_ptr += option_len as usize;
         }
@@ -401,50 +377,97 @@ impl<'dhcp> Dhcp<'dhcp> {
             client_hw_addr: self.client_hw_addr,
             // NOT IMPLEMENTED
             server_hostname: [0u8; 64],
+            // NOT IMPLMENTED
             file: [0u8; 128],
-            options: [None; 20],
+            options: DhcpOptionList::builder(),
             message_type: MessageType::Unset,
         }
     }
 
     /// Handler for a DHCP Discover
-    fn handle_discover(&self, pool: Arc<Mutex<AddressPool>>) -> Self {
-        pool.lock()
-            .unwrap()
-            .update([192, 168, 1, 149], [10, 10, 10, 10, 10, 10]);
-        drop(pool);
-
+    fn offer(&self, pool: Arc<Mutex<AddrPool>>) -> Self {
         let mut res = self.build_response();
-        res.client_addr = [192, 168, 1, 149];
 
-        res.options = DhcpOptionList::builder()
+        let mut pool = pool.lock().unwrap();
+        let ip_addr = pool
+            .request(&MacAddr::new(self.client_hw_addr))
+            .unwrap()
+            .octets();
+        let config = pool.config();
+        let subnet_mask = pool.subnet_mask().octets();
+        let lease = config.lease_time();
+
+        if let Some(server_ip) = config.server_ip() {
+            res.options.add(DhcpOption::Router(server_ip.octets()));
+        }
+        if let Some(router) = config.router() {
+            res.options.add(DhcpOption::Router(router.octets()));
+        }
+
+        res.options
             .add(DhcpOption::MessageType(MessageType::Offer))
-            .add(DhcpOption::DhcpServerIpAddr([192, 168, 1, 67]))
-            .add(DhcpOption::LeaseTime(43200))
-            .add(DhcpOption::SubnetMask([255, 255, 255, 0]))
-            .add(DhcpOption::Router([192, 168, 1, 254]))
-            .add(DhcpOption::DomainNameServer([192, 168, 1, 254]))
-            .add(DhcpOption::HostName("foo"))
-            .add(DhcpOption::DomainName("lan"))
-            .add(DhcpOption::BroadcastAddress([192, 168, 1, 255]))
-            .add(DhcpOption::End)
-            .build();
+            .add(DhcpOption::LeaseTime(lease))
+            .add(DhcpOption::SubnetMask(subnet_mask))
+            .add(DhcpOption::End);
+        res.client_addr = ip_addr;
 
-        res.message_type = MessageType::Offer;
-
+        drop(pool);
         res
     }
 
-    fn handle_request(&self, pool: Arc<Mutex<AddressPool>>) -> Self {
-        let mut res = self.build_response();
+    #[inline(always)]
+    fn ack(&self, res: &mut Dhcp, pool: MutexGuard<AddrPool>) {
+        let subnet_mask = pool.subnet_mask().octets();
+        let config = pool.config();
 
-        res.options = DhcpOptionList::builder()
+        if let Some(server_ip) = config.server_ip() {
+            res.options.add(DhcpOption::Router(server_ip.octets()));
+        }
+        if let Some(router) = config.router() {
+            res.options.add(DhcpOption::Router(router.octets()));
+        }
+
+        res.options
             .add(DhcpOption::MessageType(MessageType::Ack))
-            .add(DhcpOption::End)
-            .build();
+            .add(DhcpOption::SubnetMask(subnet_mask))
+            .add(DhcpOption::End);
 
-        res.message_type = MessageType::Ack;
+        drop(pool);
+    }
 
+    #[inline(always)]
+    fn nack(&self, dhcp_response: &mut Dhcp) {
+        dhcp_response
+            .options
+            .add(DhcpOption::MessageType(MessageType::Nack));
+    }
+
+    fn verify(&self, pool: Arc<Mutex<AddrPool>>) -> Dhcp {
+        let mut res = self.build_response();
+        let requested_ip = self.options.get(DhcpOption::REQUESTED_IP_ADDR);
+        let client_mac: MacAddr = self.client_hw_addr.into();
+
+        let pool = pool.lock().unwrap();
+
+        // RENEWING | REBINDING
+        let client_ip_set = self.client_addr != [0, 0, 0, 0];
+        if client_ip_set && requested_ip.is_none() {
+            res.client_addr = self.client_addr;
+            self.ack(&mut res, pool);
+            return res;
+        }
+
+        // SELECTING || INIT-REBOOT
+        if let Some(DhcpOption::RequestedIpAddr(ip)) = requested_ip {
+            if pool.lookup(&client_mac, &ip.into()).is_some() {
+                res.client_addr = ip;
+                self.ack(&mut res, pool);
+                return res;
+            }
+        }
+
+        // Fallthrough into nack
+        self.nack(&mut res);
         res
     }
 
@@ -454,15 +477,9 @@ impl<'dhcp> Dhcp<'dhcp> {
         buffer[2] = self.hw_addr_len;
         buffer[3] = self.hops;
         buffer[4..8].copy_from_slice(&self.transaction_id);
-        // buffer[8..10].copy_from_slice(&[0u8; 2]);
         buffer[10..12].copy_from_slice(&self.flags);
-        // buffer[12..16].copy_from_slice(&[0u8; 4]);
         buffer[16..20].copy_from_slice(&self.client_addr);
-        buffer[20..24].copy_from_slice(&[192, 168, 1, 254]);
-        // buffer[24..28].copy_from_slice(&[0u8; 4]);
         buffer[28..34].copy_from_slice(&self.client_hw_addr);
-        // buffer[44..108].copy_from_slice(&[0u8; 64]);
-        // buffer[108..236].copy_from_slice(&[0u8; 128]);
         buffer[236..240].copy_from_slice(&Dhcp::MAGIC);
 
         self.set_options(buffer)
@@ -472,7 +489,7 @@ impl<'dhcp> Dhcp<'dhcp> {
         // Start at 240 (After the magic bytes)
         let mut option_ptr = 240;
         // For every option we want
-        for opt in self.options {
+        for opt in self.options.consume() {
             if opt.is_none() {
                 continue;
             }
@@ -486,20 +503,10 @@ impl<'dhcp> Dhcp<'dhcp> {
     }
 
     /// State machine to decide what to do with packet
-    pub fn handle(
-        &self,
-        pool: Arc<Mutex<AddressPool>>,
-        buffer: &mut [u8; UDP_BUFFER_SIZE],
-    ) -> usize {
+    pub fn handle(&self, pool: Arc<Mutex<AddrPool>>, buffer: &mut [u8; UDP_BUFFER_SIZE]) -> usize {
         match self.message_type {
-            MessageType::Discover => {
-                dbg!("--Discover");
-                self.handle_discover(pool).serialiase(buffer)
-            }
-            MessageType::Request => {
-                dbg!("--Request");
-                self.handle_request(pool).serialiase(buffer)
-            }
+            MessageType::Discover => self.offer(pool).serialiase(buffer),
+            MessageType::Request => self.verify(pool).serialiase(buffer),
             _ => {
                 todo!("{:?}", self.message_type)
             }

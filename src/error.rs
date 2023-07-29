@@ -17,12 +17,6 @@ pub enum Error {
     /// Missing the DHCP magic bytes at 236..240
     DhcpMagicMissing,
 
-    /// The Dhcp Option is not handled
-    UnhandledDhcpOption(u8),
-
-    /// Invalid value in the op field
-    InvalidDhcpOpCode(u8),
-
     /// A Dhcp message must contain a message type
     NoMessageDhcpTypeProvided,
 
@@ -54,9 +48,6 @@ pub enum Error {
     /// Expected to be 2 bytes
     InvalidClientSystemArchLen(u8),
 
-    /// We only support Max Address Len's
-    UnsupportedClientIdentifierLen(u8),
-
     /// We only support ethernet 0x1
     UnsupportedClientIdHwType(u8),
 
@@ -65,6 +56,12 @@ pub enum Error {
 
     /// IP Addresses can only be 4 bytes
     InvalidIpAddrLen(u8),
+
+    /// The Server has no IP addresses left to assign
+    AllIPAddressesExhausted,
+
+    /// The DHCP request did not contain a requested IP Address
+    RequestedIpAddrOptionMissing,
 }
 
 /// Our custom Error type, we wrap all library errors inside our [Error]

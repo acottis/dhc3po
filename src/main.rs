@@ -12,7 +12,7 @@ mod types;
 
 use dhcp::Dhcp;
 use error::{Error, Result};
-use state::AddressPool;
+use state::{AddrPool, AddrPoolConfig};
 
 /// Port we listen for incomming DHCP requests, 67 is standard
 const SERVER_PORT: u16 = 67;
@@ -27,28 +27,44 @@ const UDP_BUFFER_SIZE: usize = 512;
 
 /// Our main logic, bind to our [BIND_ADDRESS]:[SERVER_PORT] and handle requests
 fn main() -> ! {
-    // Get a socket from the OS
-    let socket = UdpSocket::bind((BIND_ADDRESS, SERVER_PORT))
-        .map_err(Error::CannotBindToAddress)
-        .unwrap();
-    socket.set_broadcast(true).unwrap();
-
-    // Get an IP Range to Allocate to and share between threads
-    let dhcp_range = Arc::new(Mutex::new(AddressPool::new(
-        [192, 168, 1, 0],
-        [255, 255, 255, 0],
-    )));
+    let addr_range = setup_config();
+    let socket = bind_socket();
 
     loop {
         let buffer = &mut [0u8; UDP_BUFFER_SIZE];
 
         match socket.recv_from(buffer) {
             Ok((data_len, _)) => {
-                thread::scope(|_| handle_request(&socket, dhcp_range.clone(), &buffer[..data_len]));
+                thread::scope(|_| handle_request(&socket, addr_range.clone(), &buffer[..data_len]));
             }
             Err(ref error) => handle_error(error),
         };
     }
+}
+
+fn bind_socket() -> UdpSocket {
+    // Get a socket from the OS
+    let socket = UdpSocket::bind((BIND_ADDRESS, SERVER_PORT))
+        .map_err(Error::CannotBindToAddress)
+        .unwrap();
+    socket.set_broadcast(true).unwrap();
+    socket
+}
+
+fn setup_config() -> Arc<Mutex<AddrPool>> {
+    let dhcp_config = AddrPoolConfig::builder()
+        .set_router([172, 24, 16, 1])
+        .build();
+
+    // Get an IP Range to Allocate to and share between threads
+    let dhcp_range = AddrPool::new(
+        [172, 24, 16, 0].into(),
+        [255, 255, 240, 0].into(),
+        [172, 24, 16, 10].into(),
+        [172, 24, 16, 20].into(),
+        dhcp_config,
+    );
+    Arc::new(Mutex::new(dhcp_range))
 }
 
 /// If the recv call fails, handle and log the errors
@@ -61,13 +77,13 @@ fn handle_error(error: &std::io::Error) {
 }
 
 /// The entry point to our [Dhcp] logic
-fn handle_request(socket: &UdpSocket, pool: Arc<Mutex<AddressPool>>, data: &[u8]) {
-    dbg!(socket);
-
+fn handle_request(socket: &UdpSocket, pool: Arc<Mutex<AddrPool>>, data: &[u8]) {
     let mut response_buffer = [0u8; UDP_BUFFER_SIZE];
+    // Send the packet to the DHCP module to parse and craft a response
     let len = Dhcp::parse(data)
         .unwrap()
         .handle(pool, &mut response_buffer);
+    // Send the crafted response to the client
     socket
         .send_to(&response_buffer[..len], (BROADCAST_ADDRESS, CLIENT_PORT))
         .unwrap();

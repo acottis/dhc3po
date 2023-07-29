@@ -1,10 +1,8 @@
 use super::{ClientIdentifier, MessageType, ParameterRequest};
 
-/// The max number of [DhcpOption]'s that we support
-const MAX_LIST_LEN: usize = 20;
-
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
+#[allow(dead_code)]
 pub enum DhcpOption<'option> {
     /// 0
     Pad,
@@ -120,6 +118,7 @@ impl<'option> DhcpOption<'option> {
     pub fn serialise(&self, buffer: &mut [u8]) -> usize {
         buffer[0] = self.opcode();
         match self {
+            Self::Pad => 1,
             Self::SubnetMask(address) => {
                 let len: u8 = 6;
                 buffer[1] = len - 2;
@@ -183,26 +182,29 @@ impl<'option> DhcpOption<'option> {
     }
 }
 
-pub struct DhcpOptionList<'dhcp_option> {
-    count: usize,
-    options: [Option<DhcpOption<'dhcp_option>>; MAX_LIST_LEN],
-}
+#[derive(Debug)]
+pub struct DhcpOptionList<'dhcp_option>(
+    [Option<DhcpOption<'dhcp_option>>; DhcpOptionList::MAX_LEN],
+);
 
 impl<'dhcp_option> DhcpOptionList<'dhcp_option> {
+    pub const MAX_LEN: usize = 256;
+
     pub fn builder() -> Self {
-        Self {
-            count: 0,
-            options: [None; MAX_LIST_LEN],
-        }
+        Self([None; DhcpOptionList::MAX_LEN])
     }
 
     pub fn add(&mut self, option: DhcpOption<'dhcp_option>) -> &mut Self {
-        self.options[self.count] = Some(option);
-        self.count += 1;
+        self.0[option.opcode() as usize] = Some(option);
         self
     }
 
-    pub fn build(&self) -> [Option<DhcpOption<'dhcp_option>>; MAX_LIST_LEN] {
-        self.options
+    /// Returns the completed array of options
+    pub fn consume(&self) -> [Option<DhcpOption<'dhcp_option>>; DhcpOptionList::MAX_LEN] {
+        self.0
+    }
+
+    pub fn get(&self, opcode: u8) -> Option<DhcpOption> {
+        self.0[opcode as usize]
     }
 }
