@@ -65,9 +65,10 @@ fn handle_request(socket: &UdpSocket, pool: Arc<Mutex<AddressPool>>, data: &[u8]
     dbg!(socket);
 
     let mut response_buffer = [0u8; UDP_BUFFER_SIZE];
-    let len = Dhcp::parse(data).unwrap().handle(pool, &mut response_buffer);
+    let len = Dhcp::parse(data)
+        .unwrap()
+        .handle(pool, &mut response_buffer);
     socket
         .send_to(&response_buffer[..len], (BROADCAST_ADDRESS, CLIENT_PORT))
         .unwrap();
 }
-

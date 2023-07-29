@@ -1,8 +1,10 @@
-use super::{MessageType, ParameterRequest, ClientIdentifier};
+use super::{ClientIdentifier, MessageType, ParameterRequest};
+
+/// The max number of [DhcpOption]'s that we support
+const MAX_LIST_LEN: usize = 20;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
-
 pub enum DhcpOption<'option> {
     /// 0
     Pad,
@@ -25,6 +27,9 @@ pub enum DhcpOption<'option> {
     /// 12
     BroadcastAddress([u8; 4]),
 
+    /// 50
+    RequestedIpAddr([u8; 4]),
+
     /// 51
     LeaseTime(u32),
 
@@ -32,7 +37,7 @@ pub enum DhcpOption<'option> {
     MessageType(MessageType),
 
     /// 54
-    ServerIndentifier([u8; 4]),
+    DhcpServerIpAddr([u8; 4]),
 
     /// 55
     ParameterRequestList(
@@ -52,7 +57,7 @@ pub enum DhcpOption<'option> {
     ClientSystemArch([u8; 2]),
 
     /// 94
-    ClientNetworkDeviceInterface([u8; DhcpOption::CLIENT_NETWORK_DEVICE_INTERFACE_LEN as usize]),
+    ClientNetworkDeviceInterface([u8; DhcpOption::CLIENT_NET_DEV_INTERFACE_LEN as usize]),
 
     /// 97
     ClientUid([u8; DhcpOption::MAX_CLIENT_UID_LEN as usize]),
@@ -63,25 +68,28 @@ pub enum DhcpOption<'option> {
 
 impl<'option> DhcpOption<'option> {
     pub const PAD: u8 = 0;
+    pub const REQUESTED_IP_ADDR: u8 = 50;
     pub const LEASE_TIME: u8 = 51;
     pub const MESSAGE_TYPE: u8 = 53;
+    pub const DHCP_SERVER_IP_ADDR: u8 = 54;
     pub const PARAMETER_REQUEST_LIST: u8 = 55;
     pub const MAX_MESSAGE_SIZE: u8 = 57;
     pub const VENDOR_CLASS_ID: u8 = 60;
     pub const CLIENT_ID: u8 = 61;
     pub const CLIENT_SYSTEM_ARCH: u8 = 93;
-    pub const CLIENT_NETWORK_DEVICE_INTERFACE: u8 = 94;
+    pub const CLIENT_NET_DEV_INTERFACE: u8 = 94;
     pub const CLIENT_UID: u8 = 97;
     pub const END: u8 = 255;
 
     // Expected values
+    pub const IP_ADDR_LEN: u8 = 4;
     pub const MAX_PARAMETER_REQUEST_LIST_LEN: u8 = 40;
     pub const MAX_CLIENT_UID_LEN: u8 = 17;
     pub const MIN_CLIENT_UID_LEN: u8 = 2;
     pub const MAX_MESSAGE_SIZE_LEN: u8 = 2;
     pub const MESSAGE_TYPE_LEN: u8 = 1;
     pub const MIN_PARAMETER_REQUEST_LEN: u8 = 1;
-    pub const CLIENT_NETWORK_DEVICE_INTERFACE_LEN: u8 = 3;
+    pub const CLIENT_NET_DEV_INTERFACE_LEN: u8 = 3;
     pub const CLIENT_SYSTEM_ARCH_LEN: u8 = 2;
     pub const MAX_VENDOR_CLASS_ID_LEN: u8 = 32;
 
@@ -94,9 +102,10 @@ impl<'option> DhcpOption<'option> {
             Self::HostName(_) => 12,
             Self::DomainName(_) => 15,
             Self::BroadcastAddress(_) => 28,
+            Self::RequestedIpAddr(_) => 50,
             Self::LeaseTime(_) => 51,
             Self::MessageType(_) => 53,
-            Self::ServerIndentifier(_) => 54,
+            Self::DhcpServerIpAddr(_) => 54,
             Self::ParameterRequestList(_) => 55,
             Self::MaxMessageSize(_) => 57,
             Self::VendorClassIndentifier(_) => 60,
@@ -153,7 +162,7 @@ impl<'option> DhcpOption<'option> {
                 buffer[2] = *message as u8;
                 len as usize
             }
-            Self::ServerIndentifier(address) => {
+            Self::DhcpServerIpAddr(address) => {
                 let len: u8 = 6;
                 buffer[1] = len - 2;
                 buffer[2..6].copy_from_slice(address);
@@ -171,5 +180,29 @@ impl<'option> DhcpOption<'option> {
             Self::End => 1,
             option => todo!("We dont yet serialise DHCP Option {option:?}"),
         }
+    }
+}
+
+pub struct DhcpOptionList<'dhcp_option> {
+    count: usize,
+    options: [Option<DhcpOption<'dhcp_option>>; MAX_LIST_LEN],
+}
+
+impl<'dhcp_option> DhcpOptionList<'dhcp_option> {
+    pub fn builder() -> Self {
+        Self {
+            count: 0,
+            options: [None; MAX_LIST_LEN],
+        }
+    }
+
+    pub fn add(&mut self, option: DhcpOption<'dhcp_option>) -> &mut Self {
+        self.options[self.count] = Some(option);
+        self.count += 1;
+        self
+    }
+
+    pub fn build(&self) -> [Option<DhcpOption<'dhcp_option>>; MAX_LIST_LEN] {
+        self.options
     }
 }

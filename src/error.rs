@@ -62,6 +62,9 @@ pub enum Error {
 
     /// Expected to be 32 bytes
     InvalidVendorClassIdentifierLen(u8),
+
+    /// IP Addresses can only be 4 bytes
+    InvalidIpAddrLen(u8),
 }
 
 /// Our custom Error type, we wrap all library errors inside our [Error]

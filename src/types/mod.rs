@@ -1,7 +1,7 @@
 //! Re-export types
 
 mod dhcp_option;
-pub use dhcp_option::DhcpOption;
+pub use dhcp_option::{DhcpOption, DhcpOptionList};
 
 mod message_type;
 pub use message_type::MessageType;

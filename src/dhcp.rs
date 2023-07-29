@@ -1,8 +1,8 @@
 //! In this file we manage the DHCP specific data types and parsing
 
-use crate::types::{DhcpOption, MessageType, ParameterRequest, ClientIdentifier};
-use crate::{AddressPool, Error, Result};
+use crate::types::{ClientIdentifier, DhcpOption, DhcpOptionList, MessageType, ParameterRequest};
 use crate::UDP_BUFFER_SIZE;
+use crate::{AddressPool, Error, Result};
 use std::sync::{Arc, Mutex};
 
 /// A [Dhcp] represents a DHCP packet
@@ -131,6 +131,50 @@ impl<'dhcp> Dhcp<'dhcp> {
                         None
                     }
                 }
+                DhcpOption::REQUESTED_IP_ADDR => {
+                    option_len = *data
+                        .get(option_ptr + Self::OPTION_LEN_OFFSET)
+                        .ok_or(Error::DhcpOptionLenOutOfBounds)?;
+
+                    if option_len != DhcpOption::IP_ADDR_LEN {
+                        return Err(Error::InvalidIpAddrLen(option_len));
+                    }
+
+                    option_ptr += Self::OPTION_LEN_OFFSET + 1;
+
+                    let ip_addr_bytes =
+                        data.get(option_ptr..option_ptr + DhcpOption::IP_ADDR_LEN as usize);
+
+                    if let Some(ip_addr_bytes) = ip_addr_bytes {
+                        // We can unwap safetly here because we check above
+                        let ip_addr = <[u8; 4]>::try_from(ip_addr_bytes).unwrap();
+                        Some(DhcpOption::RequestedIpAddr(ip_addr))
+                    } else {
+                        None
+                    }
+                }
+                DhcpOption::DHCP_SERVER_IP_ADDR => {
+                    option_len = *data
+                        .get(option_ptr + Self::OPTION_LEN_OFFSET)
+                        .ok_or(Error::DhcpOptionLenOutOfBounds)?;
+
+                    if option_len != DhcpOption::IP_ADDR_LEN {
+                        return Err(Error::InvalidIpAddrLen(option_len));
+                    }
+
+                    option_ptr += Self::OPTION_LEN_OFFSET + 1;
+
+                    let ip_addr_bytes =
+                        data.get(option_ptr..option_ptr + DhcpOption::IP_ADDR_LEN as usize);
+
+                    if let Some(ip_addr_bytes) = ip_addr_bytes {
+                        // We can unwap safetly here because we check above
+                        let ip_addr = <[u8; 4]>::try_from(ip_addr_bytes).unwrap();
+                        Some(DhcpOption::DhcpServerIpAddr(ip_addr))
+                    } else {
+                        None
+                    }
+                }
                 DhcpOption::MAX_MESSAGE_SIZE => {
                     option_len = *data
                         .get(option_ptr + Self::OPTION_LEN_OFFSET)
@@ -228,12 +272,12 @@ impl<'dhcp> Dhcp<'dhcp> {
                         None
                     }
                 }
-                DhcpOption::CLIENT_NETWORK_DEVICE_INTERFACE => {
+                DhcpOption::CLIENT_NET_DEV_INTERFACE => {
                     option_len = *data
                         .get(option_ptr + Self::OPTION_LEN_OFFSET)
                         .ok_or(Error::DhcpOptionLenOutOfBounds)?;
 
-                    if option_len != DhcpOption::CLIENT_NETWORK_DEVICE_INTERFACE_LEN {
+                    if option_len != DhcpOption::CLIENT_NET_DEV_INTERFACE_LEN {
                         return Err(Error::InvalidClientNetworkDeviceInterfaceLen(option_len));
                     }
 
@@ -243,8 +287,7 @@ impl<'dhcp> Dhcp<'dhcp> {
                     let option_raw = data.get(option_ptr..option_ptr + option_len as usize);
 
                     if let Some(option_raw) = option_raw {
-                        let mut option =
-                            [0u8; DhcpOption::CLIENT_NETWORK_DEVICE_INTERFACE_LEN as usize];
+                        let mut option = [0u8; DhcpOption::CLIENT_NET_DEV_INTERFACE_LEN as usize];
                         option.copy_from_slice(&option_raw[..option_len as usize]);
                         Some(DhcpOption::ClientNetworkDeviceInterface(option))
                     } else {
@@ -257,10 +300,10 @@ impl<'dhcp> Dhcp<'dhcp> {
                         .ok_or(Error::DhcpOptionLenOutOfBounds)?;
 
                     option_ptr += Self::OPTION_LEN_OFFSET + 1;
-                    
+
                     let option_raw = &data[option_ptr..option_ptr + option_len as usize];
-                   
-                    match ClientIdentifier::try_from(option_raw){
+
+                    match ClientIdentifier::try_from(option_raw) {
                         Ok(client_id) => Some(DhcpOption::ClientIdentifier(client_id)),
                         Err(err) => return Err(err),
                     }
@@ -299,7 +342,7 @@ impl<'dhcp> Dhcp<'dhcp> {
                     // Increment pointer to start of data
                     option_ptr += Self::OPTION_LEN_OFFSET + 1;
 
-                    dbg!("Unknown Option", option, data[option_ptr + 1]);
+                    dbg!("Unknown", option, data[option_ptr + 1]);
                     None
                 }
             };
@@ -339,7 +382,7 @@ impl<'dhcp> Dhcp<'dhcp> {
     }
 
     /// Construct a new Dhcp response given a request
-    fn respond(&self) -> Self {
+    fn build_response(&self) -> Self {
         Self {
             op_code: Self::REPLY_OP_CODE,
             hw_addr_ty: Self::HW_TYPE_ETHERNET,
@@ -371,33 +414,36 @@ impl<'dhcp> Dhcp<'dhcp> {
             .update([192, 168, 1, 149], [10, 10, 10, 10, 10, 10]);
         drop(pool);
 
-        let mut res = self.respond();
+        let mut res = self.build_response();
         res.client_addr = [192, 168, 1, 149];
 
-        res.options = [
-            Some(DhcpOption::MessageType(MessageType::Offer)),
-            Some(DhcpOption::ServerIndentifier([192, 168, 1, 67])),
-            Some(DhcpOption::LeaseTime(43200)),
-            Some(DhcpOption::SubnetMask([255, 255, 255, 0])),
-            Some(DhcpOption::Router([192, 168, 1, 254])),
-            Some(DhcpOption::DomainNameServer([192, 168, 1, 254])),
-            Some(DhcpOption::HostName("foo")),
-            Some(DhcpOption::DomainName("lan")),
-            Some(DhcpOption::BroadcastAddress([192, 168, 1, 255])),
-            Some(DhcpOption::End),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            ];
+        res.options = DhcpOptionList::builder()
+            .add(DhcpOption::MessageType(MessageType::Offer))
+            .add(DhcpOption::DhcpServerIpAddr([192, 168, 1, 67]))
+            .add(DhcpOption::LeaseTime(43200))
+            .add(DhcpOption::SubnetMask([255, 255, 255, 0]))
+            .add(DhcpOption::Router([192, 168, 1, 254]))
+            .add(DhcpOption::DomainNameServer([192, 168, 1, 254]))
+            .add(DhcpOption::HostName("foo"))
+            .add(DhcpOption::DomainName("lan"))
+            .add(DhcpOption::BroadcastAddress([192, 168, 1, 255]))
+            .add(DhcpOption::End)
+            .build();
 
         res.message_type = MessageType::Offer;
+
+        res
+    }
+
+    fn handle_request(&self, pool: Arc<Mutex<AddressPool>>) -> Self {
+        let mut res = self.build_response();
+
+        res.options = DhcpOptionList::builder()
+            .add(DhcpOption::MessageType(MessageType::Ack))
+            .add(DhcpOption::End)
+            .build();
+
+        res.message_type = MessageType::Ack;
 
         res
     }
@@ -417,7 +463,7 @@ impl<'dhcp> Dhcp<'dhcp> {
         buffer[28..34].copy_from_slice(&self.client_hw_addr);
         // buffer[44..108].copy_from_slice(&[0u8; 64]);
         // buffer[108..236].copy_from_slice(&[0u8; 128]);
-        buffer[236..240].copy_from_slice(&Dhcp::MAGIC);        
+        buffer[236..240].copy_from_slice(&Dhcp::MAGIC);
 
         self.set_options(buffer)
     }
@@ -444,12 +490,15 @@ impl<'dhcp> Dhcp<'dhcp> {
         &self,
         pool: Arc<Mutex<AddressPool>>,
         buffer: &mut [u8; UDP_BUFFER_SIZE],
-        ) -> usize {
+    ) -> usize {
         match self.message_type {
             MessageType::Discover => {
-                dbg!("Discover recv");
-                let res = self.handle_discover(pool);
-                res.serialiase(buffer)
+                dbg!("--Discover");
+                self.handle_discover(pool).serialiase(buffer)
+            }
+            MessageType::Request => {
+                dbg!("--Request");
+                self.handle_request(pool).serialiase(buffer)
             }
             _ => {
                 todo!("{:?}", self.message_type)
