@@ -411,7 +411,6 @@ impl<'dhcp> Dhcp<'dhcp> {
             .octets();
 
         self.insert_requested_options(&pool, &mut res);
-
         drop(pool);
 
         // Specific Offer Options
@@ -424,12 +423,11 @@ impl<'dhcp> Dhcp<'dhcp> {
     #[inline(always)]
     fn ack(&self, res: &mut Self, pool: MutexGuard<AddrPool<'dhcp>>) {
         self.insert_requested_options(&pool, res);
+        drop(pool);
 
         res.options
             .add(DhcpOption::MessageType(MessageType::Ack))
             .add(DhcpOption::End);
-
-        drop(pool);
     }
 
     #[inline(always)]

@@ -25,6 +25,9 @@ pub enum DhcpOption<'option> {
     /// 12
     BroadcastAddress([u8; 4]),
 
+    /// 13
+    BootFileSize(u16),
+
     /// 50
     RequestedIpAddr([u8; 4]),
 
@@ -48,6 +51,12 @@ pub enum DhcpOption<'option> {
 
     /// 61
     ClientIdentifier(ClientIdentifier),
+
+    /// 66
+    TftpServerName(&'option str),
+
+    /// 67
+    BootFileName(&'option str),
 
     /// 93
     ClientSystemArch([u8; 2]),
@@ -96,6 +105,7 @@ impl<'option> DhcpOption<'option> {
             Self::Router(_) => 3,
             Self::DomainNameServer(_) => 6,
             Self::HostName(_) => 12,
+            Self::BootFileSize(_) => 13,
             Self::DomainName(_) => 15,
             Self::BroadcastAddress(_) => 28,
             Self::RequestedIpAddr(_) => 50,
@@ -105,6 +115,8 @@ impl<'option> DhcpOption<'option> {
             Self::ParameterRequestList(_) => 55,
             Self::MaxMessageSize(_) => 57,
             Self::VendorClassIndentifier(_) => 60,
+            Self::TftpServerName(_) => 66,
+            Self::BootFileName(_) => 67,
             Self::ClientIdentifier(_) => 61,
             Self::ClientSystemArch(_) => 93,
             Self::ClientNetworkDeviceInterface(_) => 94,
@@ -117,41 +129,24 @@ impl<'option> DhcpOption<'option> {
         buffer[0] = self.opcode();
         match self {
             Self::Pad => 1,
-            Self::SubnetMask(address) => {
+            Self::SubnetMask(address)
+            | Self::Router(address)
+            | Self::BroadcastAddress(address)
+            | Self::DomainNameServer(address)
+            | Self::DhcpServerIpAddr(address) => {
                 let len: u8 = 6;
                 buffer[1] = len - 2;
                 buffer[2..6].copy_from_slice(address);
                 len as usize
             }
-            Self::Router(address) => {
-                let len: u8 = 6;
-                buffer[1] = len - 2;
-                buffer[2..6].copy_from_slice(address);
-                len as usize
-            }
-            Self::HostName(name) => {
+            Self::DomainName(name)
+            | Self::TftpServerName(name)
+            | Self::BootFileName(name)
+            | Self::HostName(name) => {
                 let len = name.len() + 2;
                 buffer[1] = (len - 2) as u8;
                 buffer[2..len].copy_from_slice(name.as_bytes());
                 len
-            }
-            Self::DomainName(name) => {
-                let len = name.len() + 2;
-                buffer[1] = (len - 2) as u8;
-                buffer[2..len].copy_from_slice(name.as_bytes());
-                len
-            }
-            Self::BroadcastAddress(address) => {
-                let len: u8 = 6;
-                buffer[1] = len - 2;
-                buffer[2..6].copy_from_slice(address);
-                len as usize
-            }
-            Self::DomainNameServer(address) => {
-                let len: u8 = 6;
-                buffer[1] = len - 2;
-                buffer[2..6].copy_from_slice(address);
-                len as usize
             }
             Self::MessageType(message) => {
                 let len: u8 = 3;
@@ -159,10 +154,11 @@ impl<'option> DhcpOption<'option> {
                 buffer[2] = *message as u8;
                 len as usize
             }
-            Self::DhcpServerIpAddr(address) => {
-                let len: u8 = 6;
+            Self::BootFileSize(size) => {
+                let len: u8 = 4;
                 buffer[1] = len - 2;
-                buffer[2..6].copy_from_slice(address);
+                buffer[2] = (size >> 8) as u8;
+                buffer[3] = *size as u8;
                 len as usize
             }
             Self::LeaseTime(time) => {

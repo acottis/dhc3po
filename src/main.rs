@@ -63,8 +63,13 @@ fn setup_config<'addr_pool>() -> Arc<Mutex<AddrPool<'addr_pool>>> {
     // Add our DHCP Options
     addr_pool
         .option_builder()
-        .add(DhcpOption::Router([127, 24, 16, 1]))
+        .add(DhcpOption::Router([172, 24, 16, 1]))
+        .add(DhcpOption::DomainNameServer([172, 24, 16, 1]))
+        .add(DhcpOption::DhcpServerIpAddr([172, 24, 18, 211]))
+        .add(DhcpOption::BootFileName("stage0.bin"))
+        .add(DhcpOption::TftpServerName("172.24.18.211"))
         .add(DhcpOption::LeaseTime(32400));
+
     Arc::new(Mutex::new(addr_pool))
 }
 
