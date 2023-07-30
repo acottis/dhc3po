@@ -1,6 +1,6 @@
 //! This is where we delcare our structs and logic for storage of IP Addresses
 use crate::error::{Error, Result};
-use crate::types::MacAddr;
+use crate::types::{DhcpOption, DhcpOptionList, MacAddr};
 use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
 
@@ -25,80 +25,38 @@ impl Client {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct AddrPoolConfig {
-    router: Option<Ipv4Addr>,
-    server_ip: Option<Ipv4Addr>,
-    lease_time: u32,
-}
-
-impl AddrPoolConfig {
-    pub fn router(&self) -> Option<Ipv4Addr> {
-        self.router
-    }
-
-    pub fn server_ip(&self) -> Option<Ipv4Addr> {
-        self.server_ip
-    }
-
-    pub fn lease_time(&self) -> u32 {
-        self.lease_time
-    }
-
-    pub fn set_router(&mut self, ip_addr: impl Into<Ipv4Addr>) -> &mut Self {
-        self.router = Some(ip_addr.into());
-        self
-    }
-
-    pub fn set_server_ip(&mut self, ip_addr: impl Into<Ipv4Addr>) -> &mut Self {
-        self.server_ip = Some(ip_addr.into());
-        self
-    }
-
-    pub fn builder() -> Self {
-        Self {
-            router: None,
-            server_ip: None,
-            lease_time: 43200,
-        }
-    }
-
-    pub fn build(&self) -> AddrPoolConfig {
-        *self
-    }
-}
-
 #[derive(Debug)]
-pub struct AddrPool {
+pub struct AddrPool<'dhcp_options> {
     subnet: Ipv4Addr,
-    mask: Ipv4Addr,
     pool: DhcpRange,
-    config: AddrPoolConfig,
+    options: DhcpOptionList<'dhcp_options>,
 }
 
-impl AddrPool {
+impl<'dhcp_options> AddrPool<'dhcp_options> {
     pub fn new(
-        subnet: Ipv4Addr,
-        mask: Ipv4Addr,
-        start: Ipv4Addr,
-        end: Ipv4Addr,
-        config: AddrPoolConfig,
+        subnet: impl Into<Ipv4Addr>,
+        mask: impl Into<Ipv4Addr>,
+        range: (impl Into<Ipv4Addr>, impl Into<Ipv4Addr>),
     ) -> Self {
+        let mut options = DhcpOptionList::builder();
+
+        options
+            .add(DhcpOption::SubnetMask(mask.into().octets()))
+            .add(DhcpOption::End);
+
         Self {
-            subnet,
-            mask,
-            pool: Self::initialise_range(start, end),
-            config,
+            subnet: subnet.into(),
+            pool: Self::initialise_range(range.0.into(), range.1.into()),
+            options,
         }
     }
 
-    pub fn config(&self) -> &AddrPoolConfig {
-        &self.config
+    pub fn option_builder(&mut self) -> &mut DhcpOptionList<'dhcp_options> {
+        &mut self.options
     }
 
-    /// Getter for subnet mask
-    pub fn subnet_mask(&self) -> Ipv4Addr {
-        self.mask
+    pub fn options(&self) -> &DhcpOptionList<'dhcp_options> {
+        &self.options
     }
 
     /// Request an IP Address from the pool

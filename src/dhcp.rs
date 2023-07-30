@@ -8,7 +8,7 @@ use crate::{AddrPool, Error, Result};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// A [Dhcp] represents a DHCP packet
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 #[allow(dead_code)]
 pub struct Dhcp<'dhcp> {
     /// op - Operate Code of the message
@@ -201,9 +201,7 @@ impl<'dhcp> Dhcp<'dhcp> {
                     let list = data.get(option_ptr..option_ptr + option_len as usize);
 
                     if let Some(list) = list {
-                        let mut req_params: [Option<ParameterRequest>;
-                            DhcpOption::MAX_PARAMETER_REQUEST_LIST_LEN as usize] =
-                            [None; DhcpOption::MAX_PARAMETER_REQUEST_LIST_LEN as usize];
+                        let mut req_params = [None; DhcpOptionList::MAX_LEN as usize];
 
                         for (index, param) in list.iter().enumerate() {
                             let req_param = (*param).into();
@@ -384,65 +382,62 @@ impl<'dhcp> Dhcp<'dhcp> {
         }
     }
 
-    /// Handler for a DHCP Discover
-    fn offer(&self, pool: Arc<Mutex<AddrPool>>) -> Self {
-        let mut res = self.build_response();
+    #[inline(always)]
+    fn insert_requested_options(&self, pool: &MutexGuard<AddrPool<'dhcp>>, res: &mut Self) {
+        let insert_matching_options = |req_option: &ParameterRequest| {
+            if let Some(opt) = pool.options().consume()[*req_option as usize] {
+                _ = &res.options.add(opt);
+            }
+        };
 
+        if let Some(DhcpOption::ParameterRequestList(option_req_list)) =
+            self.options.get(DhcpOption::PARAMETER_REQUEST_LIST)
+        {
+            option_req_list
+                .iter()
+                .flatten()
+                .for_each(insert_matching_options);
+        }
+    }
+
+    /// Handler for a DHCP Discover
+    fn offer(&self, pool: Arc<Mutex<AddrPool<'dhcp>>>) -> Self {
+        let mut res = self.build_response();
         let mut pool = pool.lock().unwrap();
-        let ip_addr = pool
+
+        res.client_addr = pool
             .request(&MacAddr::new(self.client_hw_addr))
             .unwrap()
             .octets();
-        let config = pool.config();
-        let subnet_mask = pool.subnet_mask().octets();
-        let lease = config.lease_time();
 
-        if let Some(server_ip) = config.server_ip() {
-            res.options.add(DhcpOption::Router(server_ip.octets()));
-        }
-        if let Some(router) = config.router() {
-            res.options.add(DhcpOption::Router(router.octets()));
-        }
-
-        res.options
-            .add(DhcpOption::MessageType(MessageType::Offer))
-            .add(DhcpOption::LeaseTime(lease))
-            .add(DhcpOption::SubnetMask(subnet_mask))
-            .add(DhcpOption::End);
-        res.client_addr = ip_addr;
+        self.insert_requested_options(&pool, &mut res);
 
         drop(pool);
+
+        // Specific Offer Options
+        res.options
+            .add(DhcpOption::MessageType(MessageType::Offer))
+            .add(DhcpOption::End);
         res
     }
 
     #[inline(always)]
-    fn ack(&self, res: &mut Dhcp, pool: MutexGuard<AddrPool>) {
-        let subnet_mask = pool.subnet_mask().octets();
-        let config = pool.config();
-
-        if let Some(server_ip) = config.server_ip() {
-            res.options.add(DhcpOption::Router(server_ip.octets()));
-        }
-        if let Some(router) = config.router() {
-            res.options.add(DhcpOption::Router(router.octets()));
-        }
+    fn ack(&self, res: &mut Self, pool: MutexGuard<AddrPool<'dhcp>>) {
+        self.insert_requested_options(&pool, res);
 
         res.options
             .add(DhcpOption::MessageType(MessageType::Ack))
-            .add(DhcpOption::SubnetMask(subnet_mask))
             .add(DhcpOption::End);
 
         drop(pool);
     }
 
     #[inline(always)]
-    fn nack(&self, dhcp_response: &mut Dhcp) {
-        dhcp_response
-            .options
-            .add(DhcpOption::MessageType(MessageType::Nack));
+    fn nack(&self, res: &mut Self) {
+        res.options.add(DhcpOption::MessageType(MessageType::Nack));
     }
 
-    fn verify(&self, pool: Arc<Mutex<AddrPool>>) -> Dhcp {
+    fn verify(&self, pool: Arc<Mutex<AddrPool<'dhcp>>>) -> Dhcp {
         let mut res = self.build_response();
         let requested_ip = self.options.get(DhcpOption::REQUESTED_IP_ADDR);
         let client_mac: MacAddr = self.client_hw_addr.into();
@@ -503,7 +498,11 @@ impl<'dhcp> Dhcp<'dhcp> {
     }
 
     /// State machine to decide what to do with packet
-    pub fn handle(&self, pool: Arc<Mutex<AddrPool>>, buffer: &mut [u8; UDP_BUFFER_SIZE]) -> usize {
+    pub fn handle(
+        &self,
+        pool: Arc<Mutex<AddrPool<'dhcp>>>,
+        buffer: &mut [u8; UDP_BUFFER_SIZE],
+    ) -> usize {
         match self.message_type {
             MessageType::Discover => self.offer(pool).serialiase(buffer),
             MessageType::Request => self.verify(pool).serialiase(buffer),

@@ -12,7 +12,8 @@ mod types;
 
 use dhcp::Dhcp;
 use error::{Error, Result};
-use state::{AddrPool, AddrPoolConfig};
+use state::AddrPool;
+use types::DhcpOption;
 
 /// Port we listen for incomming DHCP requests, 67 is standard
 const SERVER_PORT: u16 = 67;
@@ -51,20 +52,20 @@ fn bind_socket() -> UdpSocket {
     socket
 }
 
-fn setup_config() -> Arc<Mutex<AddrPool>> {
-    let dhcp_config = AddrPoolConfig::builder()
-        .set_router([172, 24, 16, 1])
-        .build();
-
+fn setup_config<'addr_pool>() -> Arc<Mutex<AddrPool<'addr_pool>>> {
     // Get an IP Range to Allocate to and share between threads
-    let dhcp_range = AddrPool::new(
-        [172, 24, 16, 0].into(),
-        [255, 255, 240, 0].into(),
-        [172, 24, 16, 10].into(),
-        [172, 24, 16, 20].into(),
-        dhcp_config,
+    let mut addr_pool = AddrPool::new(
+        [172, 24, 16, 0],
+        [255, 255, 240, 0],
+        ([172, 24, 16, 10], [172, 24, 16, 20]),
     );
-    Arc::new(Mutex::new(dhcp_range))
+
+    // Add our DHCP Options
+    addr_pool
+        .option_builder()
+        .add(DhcpOption::Router([127, 24, 16, 1]))
+        .add(DhcpOption::LeaseTime(32400));
+    Arc::new(Mutex::new(addr_pool))
 }
 
 /// If the recv call fails, handle and log the errors

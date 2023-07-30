@@ -38,9 +38,7 @@ pub enum DhcpOption<'option> {
     DhcpServerIpAddr([u8; 4]),
 
     /// 55
-    ParameterRequestList(
-        [Option<ParameterRequest>; DhcpOption::MAX_PARAMETER_REQUEST_LIST_LEN as usize],
-    ),
+    ParameterRequestList([Option<ParameterRequest>; DhcpOptionList::MAX_LEN as usize]),
 
     /// 57
     MaxMessageSize(u16),
@@ -182,7 +180,7 @@ impl<'option> DhcpOption<'option> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct DhcpOptionList<'dhcp_option>(
     [Option<DhcpOption<'dhcp_option>>; DhcpOptionList::MAX_LEN],
 );
@@ -200,8 +198,8 @@ impl<'dhcp_option> DhcpOptionList<'dhcp_option> {
     }
 
     /// Returns the completed array of options
-    pub fn consume(&self) -> [Option<DhcpOption<'dhcp_option>>; DhcpOptionList::MAX_LEN] {
-        self.0
+    pub fn consume(&self) -> &[Option<DhcpOption<'dhcp_option>>; DhcpOptionList::MAX_LEN] {
+        &self.0
     }
 
     pub fn get(&self, opcode: u8) -> Option<DhcpOption> {
