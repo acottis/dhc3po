@@ -1,8 +1,10 @@
 //! This is where we delcare our structs and logic for storage of IP Addresses
 use crate::error::{Error, Result};
 use crate::types::{DhcpOption, DhcpOptionList, MacAddr};
+use crate::DEFAULT_LEASE_TIME;
 use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
+use std::time::{Duration, SystemTime};
 
 /// Wrapper for readability
 type DhcpRange = BTreeMap<Ipv4Addr, Option<Client>>;
@@ -13,14 +15,16 @@ const IP_ADDR_LEN: usize = 4;
 #[derive(Debug, PartialEq, Eq)]
 pub struct Client {
     mac_address: MacAddr,
-    lease_time: u16,
+    expires: SystemTime,
 }
 
 impl Client {
-    fn new(mac_address: &MacAddr) -> Self {
+    fn new(mac_address: &MacAddr, lease_time: u32) -> Self {
         Self {
             mac_address: *mac_address,
-            lease_time: 0,
+            expires: SystemTime::now()
+                .checked_add(Duration::from_secs(lease_time as u64))
+                .unwrap(),
         }
     }
 }
@@ -51,7 +55,7 @@ impl<'dhcp_options> AddrPool<'dhcp_options> {
         }
     }
 
-    pub fn option_builder(&mut self) -> &mut DhcpOptionList<'dhcp_options> {
+    pub fn options_mut(&mut self) -> &mut DhcpOptionList<'dhcp_options> {
         &mut self.options
     }
 
@@ -59,18 +63,67 @@ impl<'dhcp_options> AddrPool<'dhcp_options> {
         &self.options
     }
 
-    /// Request an IP Address from the pool
-    pub fn request(&mut self, mac_address: &MacAddr) -> Result<Ipv4Addr> {
-        for (ip, client) in self.pool.iter_mut() {
+    fn allocate_address(&mut self, mac_address: &MacAddr) -> Option<Ipv4Addr> {
+        let lease_time = match self.options.get(DhcpOption::LEASE_TIME) {
+            Some(DhcpOption::LeaseTime(time)) => time,
+            _ => DEFAULT_LEASE_TIME,
+        };
+
+        for (ip, client) in &mut self.pool {
             if client.is_none() {
-                *client = Some(Client::new(mac_address));
-                return Ok(*ip);
+                *client = Some(Client::new(mac_address, lease_time));
+                return Some(*ip);
             }
         }
-        Err(Error::AllIPAddressesExhausted)
+
+        println!("{:?}", Error::AllIPAddressesExhausted);
+        None
     }
 
-    pub fn lookup(&self, mac_address: &MacAddr, ip_addr: &Ipv4Addr) -> Option<()> {
+    /// Request an IP Address from the pool
+    pub fn request(&mut self, mac_address: &MacAddr) -> Ipv4Addr {
+        self.lookup_mac(&mac_address).unwrap_or_else(|| {
+            self.allocate_address(&mac_address)
+                .unwrap_or_else(|| self.evict_oldest_lease(&mac_address))
+        })
+    }
+
+    fn evict_oldest_lease(&mut self, mac_address: &MacAddr) -> Ipv4Addr {
+        let lease_time = match self.options.get(DhcpOption::LEASE_TIME) {
+            Some(DhcpOption::LeaseTime(time)) => time,
+            _ => DEFAULT_LEASE_TIME,
+        };
+
+        let victim = self
+            .pool
+            .iter()
+            .filter(|(_, client)| client.is_some())
+            .min_by_key(|(_, client)| client.as_ref().unwrap().expires)
+            .unwrap()
+            .0
+            .to_owned();
+
+        self.pool
+            .insert(victim, Some(Client::new(mac_address, lease_time)));
+
+        victim
+    }
+
+    fn lookup_mac(&self, mac_addr: &MacAddr) -> Option<Ipv4Addr> {
+        self.pool
+            .iter()
+            .find(|client| {
+                if let Some(client) = client.1 {
+                    if client.mac_address == *mac_addr {
+                        return true;
+                    }
+                }
+                return false;
+            })
+            .and_then(|(ip, mac)| Some(ip).copied())
+    }
+
+    pub fn verify_request(&self, mac_address: &MacAddr, ip_addr: &Ipv4Addr) -> Option<()> {
         if let Some(Some(client)) = self.pool.get(ip_addr) {
             if client.mac_address == *mac_address {
                 return Some(());
@@ -79,14 +132,6 @@ impl<'dhcp_options> AddrPool<'dhcp_options> {
             }
         }
         None
-    }
-
-    /// Update an existing record
-    pub fn update(&mut self, ip_addr: [u8; 4], mac_address: &MacAddr) {
-        self.pool
-            .get_mut(&ip_addr.into())
-            .unwrap()
-            .replace(Client::new(mac_address));
     }
 
     fn initialise_range(start: Ipv4Addr, end: Ipv4Addr) -> DhcpRange {

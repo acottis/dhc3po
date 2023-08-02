@@ -400,11 +400,11 @@ impl<'dhcp> Dhcp<'dhcp> {
         }
     }
 
-    fn insert_server_addr(&self, pool: &MutexGuard<AddrPool<'dhcp>>, res: &mut Self){
+    fn insert_server_addr(&self, pool: &MutexGuard<AddrPool<'dhcp>>, res: &mut Self) {
         let server_address = pool.options().get(DhcpOption::DHCP_SERVER_IP_ADDR);
         res.server_addr = match server_address {
             Some(DhcpOption::DhcpServerIpAddr(ip)) => ip,
-            _ => [0,0,0,0],
+            _ => [0, 0, 0, 0],
         };
     }
 
@@ -413,10 +413,7 @@ impl<'dhcp> Dhcp<'dhcp> {
         let mut res = self.build_response();
         let mut pool = pool.lock().unwrap();
 
-        res.client_addr = pool
-            .request(&MacAddr::new(self.client_hw_addr))
-            .unwrap()
-            .octets();
+        res.client_addr = pool.request(&MacAddr::new(self.client_hw_addr)).octets();
 
         self.insert_requested_options(&pool, &mut res);
         self.insert_server_addr(&pool, &mut res);
@@ -466,7 +463,7 @@ impl<'dhcp> Dhcp<'dhcp> {
 
         // SELECTING || INIT-REBOOT
         if let Some(DhcpOption::RequestedIpAddr(ip)) = requested_ip {
-            if pool.lookup(&client_mac, &ip.into()).is_some() {
+            if pool.verify_request(&client_mac, &ip.into()).is_some() {
                 res.client_addr = ip;
                 self.ack(&mut res, pool);
                 return res;

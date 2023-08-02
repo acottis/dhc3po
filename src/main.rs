@@ -25,6 +25,8 @@ const BIND_ADDRESS: &str = "0.0.0.0";
 const BROADCAST_ADDRESS: &str = "255.255.255.255";
 /// Any bytes over 512 will be discarded
 const UDP_BUFFER_SIZE: usize = 512;
+/// If a [DhcpOption::LeaseTime] is not specified use this
+const DEFAULT_LEASE_TIME: u32 = 43200;
 
 /// Our main logic, bind to our [BIND_ADDRESS]:[SERVER_PORT] and handle requests
 fn main() -> ! {
@@ -65,7 +67,7 @@ fn setup_config<'addr_pool>() -> Arc<Mutex<AddrPool<'addr_pool>>> {
 
     // Add our DHCP Options
     addr_pool
-        .option_builder()
+        .options_mut()
         .add(DhcpOption::Router([192, 168, 10, 1]))
         //.add(DhcpOption::DomainNameServer([172, 24, 16, 1]))
         // .add(DhcpOption::DomainNameServer([192, 168, 10, 1]))
