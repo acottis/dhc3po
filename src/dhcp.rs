@@ -400,6 +400,14 @@ impl<'dhcp> Dhcp<'dhcp> {
         }
     }
 
+    fn insert_server_addr(&self, pool: &MutexGuard<AddrPool<'dhcp>>, res: &mut Self){
+        let server_address = pool.options().get(DhcpOption::DHCP_SERVER_IP_ADDR);
+        res.server_addr = match server_address {
+            Some(DhcpOption::DhcpServerIpAddr(ip)) => ip,
+            _ => [0,0,0,0],
+        };
+    }
+
     /// Handler for a DHCP Discover
     fn offer(&self, pool: Arc<Mutex<AddrPool<'dhcp>>>) -> Self {
         let mut res = self.build_response();
@@ -411,6 +419,8 @@ impl<'dhcp> Dhcp<'dhcp> {
             .octets();
 
         self.insert_requested_options(&pool, &mut res);
+        self.insert_server_addr(&pool, &mut res);
+
         drop(pool);
 
         // Specific Offer Options
@@ -423,6 +433,8 @@ impl<'dhcp> Dhcp<'dhcp> {
     #[inline(always)]
     fn ack(&self, res: &mut Self, pool: MutexGuard<AddrPool<'dhcp>>) {
         self.insert_requested_options(&pool, res);
+        self.insert_server_addr(&pool, res);
+
         drop(pool);
 
         res.options
@@ -432,7 +444,9 @@ impl<'dhcp> Dhcp<'dhcp> {
 
     #[inline(always)]
     fn nack(&self, res: &mut Self) {
-        res.options.add(DhcpOption::MessageType(MessageType::Nack));
+        res.options
+            .add(DhcpOption::MessageType(MessageType::Nack))
+            .add(DhcpOption::End);
     }
 
     fn verify(&self, pool: Arc<Mutex<AddrPool<'dhcp>>>) -> Dhcp {
@@ -472,6 +486,7 @@ impl<'dhcp> Dhcp<'dhcp> {
         buffer[4..8].copy_from_slice(&self.transaction_id);
         buffer[10..12].copy_from_slice(&self.flags);
         buffer[16..20].copy_from_slice(&self.client_addr);
+        buffer[20..24].copy_from_slice(&self.server_addr);
         buffer[28..34].copy_from_slice(&self.client_hw_addr);
         buffer[236..240].copy_from_slice(&Dhcp::MAGIC);
 

@@ -55,19 +55,25 @@ fn bind_socket() -> UdpSocket {
 fn setup_config<'addr_pool>() -> Arc<Mutex<AddrPool<'addr_pool>>> {
     // Get an IP Range to Allocate to and share between threads
     let mut addr_pool = AddrPool::new(
-        [172, 24, 16, 0],
-        [255, 255, 240, 0],
-        ([172, 24, 16, 10], [172, 24, 16, 20]),
+        // [172, 24, 16, 0],
+        // [255, 255, 240, 0],
+        // ([172, 24, 16, 10], [172, 24, 16, 20]),
+        [192, 168, 10, 0],
+        [255, 255, 255, 0],
+        ([192, 168, 10, 10], [192, 168, 10, 40]),
     );
 
     // Add our DHCP Options
     addr_pool
         .option_builder()
-        .add(DhcpOption::Router([172, 24, 16, 1]))
-        .add(DhcpOption::DomainNameServer([172, 24, 16, 1]))
-        .add(DhcpOption::DhcpServerIpAddr([172, 24, 18, 211]))
+        .add(DhcpOption::Router([192, 168, 10, 1]))
+        //.add(DhcpOption::DomainNameServer([172, 24, 16, 1]))
+        // .add(DhcpOption::DomainNameServer([192, 168, 10, 1]))
+        // .add(DhcpOption::DhcpServerIpAddr([172, 24, 18, 211]))
+        .add(DhcpOption::DhcpServerIpAddr([192, 168, 10, 1]))
         .add(DhcpOption::BootFileName("stage0.bin"))
-        .add(DhcpOption::TftpServerName("172.24.18.211"))
+        .add(DhcpOption::TftpServerName("192.168.10.1"))
+        // .add(DhcpOption::TftpServerName("172.24.18.211"))
         .add(DhcpOption::LeaseTime(32400));
 
     Arc::new(Mutex::new(addr_pool))

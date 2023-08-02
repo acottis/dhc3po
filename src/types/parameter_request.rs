@@ -8,6 +8,7 @@ pub enum ParameterRequest {
     TimeServer = 4,
     NameServer = 5,
     DomainNameServer = 6,
+    LogServer = 7,
     HostName = 12,
     BootFileSize = 13,
     DomainName = 15,
@@ -15,6 +16,7 @@ pub enum ParameterRequest {
     ExtensionsPath = 18,
     MaxDatagramReassmblySize = 22,
     DefaultIpTtl = 23,
+    InterfaceMtu = 26,
     BroadcastAddress = 28,
     PerformRouterDiscover = 31,
     StaticRoute = 33,
@@ -46,6 +48,7 @@ pub enum ParameterRequest {
     PxeUndefined7 = 135,
     ClasslessStaticRouteMicrosoft = 249,
     ProxyAutodiscovery = 252,
+    Unimplemented,
 }
 
 impl From<u8> for ParameterRequest {
@@ -57,6 +60,7 @@ impl From<u8> for ParameterRequest {
             4 => Self::TimeServer,
             5 => Self::NameServer,
             6 => Self::DomainNameServer,
+            7 => Self::LogServer,
             12 => Self::HostName,
             13 => Self::BootFileSize,
             15 => Self::DomainName,
@@ -64,6 +68,7 @@ impl From<u8> for ParameterRequest {
             18 => Self::ExtensionsPath,
             22 => Self::MaxDatagramReassmblySize,
             23 => Self::DefaultIpTtl,
+            26 => Self::InterfaceMtu,
             28 => Self::BroadcastAddress,
             31 => Self::PerformRouterDiscover,
             33 => Self::StaticRoute,
@@ -95,8 +100,9 @@ impl From<u8> for ParameterRequest {
             135 => Self::PxeUndefined7,
             249 => Self::ClasslessStaticRouteMicrosoft,
             252 => Self::ProxyAutodiscovery,
-            unhandled => {
-                todo!("RequestedParameter currently unhandled {}", unhandled);
+            unimplemented => {
+                println!("RequestedParameter {unimplemented} unimplemented");
+                Self::Unimplemented
             }
         }
     }
