@@ -12,6 +12,7 @@ mod types;
 
 use dhcp::Dhcp;
 use error::{Error, Result};
+use log::info;
 use state::AddrPool;
 use types::DhcpOption;
 
@@ -30,6 +31,9 @@ const DEFAULT_LEASE_TIME: u32 = 43200;
 
 /// Our main logic, bind to our [BIND_ADDRESS]:[SERVER_PORT] and handle requests
 fn main() -> ! {
+    env_logger::init();
+
+    info!("Dhcp Server Starting...");
     let addr_range = setup_config();
     let socket = bind_socket();
 
@@ -46,6 +50,7 @@ fn main() -> ! {
 }
 
 fn bind_socket() -> UdpSocket {
+    info!("Binding to {BIND_ADDRESS}:{SERVER_PORT}...");
     // Get a socket from the OS
     let socket = UdpSocket::bind((BIND_ADDRESS, SERVER_PORT))
         .map_err(Error::CannotBindToAddress)
@@ -60,22 +65,20 @@ fn setup_config<'addr_pool>() -> Arc<Mutex<AddrPool<'addr_pool>>> {
         // [172, 24, 16, 0],
         // [255, 255, 240, 0],
         // ([172, 24, 16, 10], [172, 24, 16, 20]),
-        [192, 168, 10, 0],
+        [192, 168, 1, 0],
         [255, 255, 255, 0],
-        ([192, 168, 10, 10], [192, 168, 10, 40]),
+        ([192, 168, 1, 10], [192, 168, 1, 40]),
     );
 
     // Add our DHCP Options
     addr_pool
         .options_mut()
-        .add(DhcpOption::Router([192, 168, 10, 1]))
-        //.add(DhcpOption::DomainNameServer([172, 24, 16, 1]))
-        // .add(DhcpOption::DomainNameServer([192, 168, 10, 1]))
-        // .add(DhcpOption::DhcpServerIpAddr([172, 24, 18, 211]))
-        .add(DhcpOption::DhcpServerIpAddr([192, 168, 10, 1]))
+        .add(DhcpOption::Router([192, 168, 1, 254]))
+        .add(DhcpOption::DhcpServerIpAddr([192, 168, 1, 86]))
         .add(DhcpOption::BootFileName("stage0.bin"))
         .add(DhcpOption::TftpServerName("192.168.10.1"))
-        // .add(DhcpOption::TftpServerName("172.24.18.211"))
+        .add(DhcpOption::DomainName("home"))
+        .add(DhcpOption::DomainNameServer([1, 1, 1, 1]))
         .add(DhcpOption::LeaseTime(32400));
 
     Arc::new(Mutex::new(addr_pool))

@@ -1,5 +1,7 @@
 //! In this file we manage the DHCP specific data types and parsing
 
+use log::{error, info, warn};
+
 use crate::types::{
     ClientIdentifier, DhcpOption, DhcpOptionList, MacAddr, MessageType, ParameterRequest,
 };
@@ -319,7 +321,7 @@ impl<'dhcp> Dhcp<'dhcp> {
                     // Increment pointer to start of data
                     option_ptr += Self::OPTION_LEN_OFFSET + 1;
 
-                    println!("Unknown Option: {option}");
+                    warn!("Unknown DhcpOption Recieved: {option}");
                 }
             };
 
@@ -382,11 +384,12 @@ impl<'dhcp> Dhcp<'dhcp> {
         }
     }
 
-    #[inline(always)]
     fn insert_requested_options(&self, pool: &MutexGuard<AddrPool<'dhcp>>, res: &mut Self) {
         let insert_matching_options = |req_option: &ParameterRequest| {
             if let Some(opt) = pool.options().consume()[*req_option as usize] {
                 _ = &res.options.add(opt);
+            } else {
+                warn!("Did not include option: {req_option:?}")
             }
         };
 
@@ -401,11 +404,18 @@ impl<'dhcp> Dhcp<'dhcp> {
     }
 
     fn insert_server_addr(&self, pool: &MutexGuard<AddrPool<'dhcp>>, res: &mut Self) {
-        let server_address = pool.options().get(DhcpOption::DHCP_SERVER_IP_ADDR);
-        res.server_addr = match server_address {
-            Some(DhcpOption::DhcpServerIpAddr(ip)) => ip,
-            _ => [0, 0, 0, 0],
-        };
+        if let Some(DhcpOption::DhcpServerIpAddr(addr)) =
+            pool.options().get(DhcpOption::DHCP_SERVER_IP_ADDR)
+        {
+            res.server_addr = addr;
+            res.options.add(DhcpOption::DhcpServerIpAddr(addr));
+        }
+    }
+
+    fn insert_lease(&self, pool: &MutexGuard<AddrPool<'dhcp>>, res: &mut Self) {
+        if let Some(DhcpOption::LeaseTime(lease)) = pool.options().get(DhcpOption::LEASE_TIME) {
+            res.options.add(DhcpOption::LeaseTime(lease));
+        }
     }
 
     /// Handler for a DHCP Discover
@@ -416,6 +426,7 @@ impl<'dhcp> Dhcp<'dhcp> {
         res.client_addr = pool.request(&MacAddr::new(self.client_hw_addr)).octets();
 
         self.insert_requested_options(&pool, &mut res);
+        self.insert_lease(&pool, &mut res);
         self.insert_server_addr(&pool, &mut res);
 
         drop(pool);
@@ -468,10 +479,15 @@ impl<'dhcp> Dhcp<'dhcp> {
                 self.ack(&mut res, pool);
                 return res;
             }
+            warn!("Client requested IP not valid: {:?}", requested_ip);
         }
 
         // Fallthrough into nack
         self.nack(&mut res);
+        error!(
+            "Sending Nack XID: {:X?}, MAC: {:X?}",
+            self.transaction_id, self.client_hw_addr
+        );
         res
     }
 
@@ -513,8 +529,13 @@ impl<'dhcp> Dhcp<'dhcp> {
         pool: Arc<Mutex<AddrPool<'dhcp>>>,
         buffer: &mut [u8; UDP_BUFFER_SIZE],
     ) -> usize {
+        info!("Recieved {:?}", self.message_type);
         match self.message_type {
-            MessageType::Discover => self.offer(pool).serialiase(buffer),
+            MessageType::Discover => {
+                let offer = self.offer(pool);
+                info!("Sending IP Offer: {:?}", offer.client_addr);
+                offer.serialiase(buffer)
+            }
             MessageType::Request => self.verify(pool).serialiase(buffer),
             _ => {
                 todo!("{:?}", self.message_type)

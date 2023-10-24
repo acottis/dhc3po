@@ -1,5 +1,7 @@
 //! This is where we delcare our structs and logic for storage of IP Addresses
-use crate::error::{Error, Result};
+use log::error;
+
+use crate::error::Error;
 use crate::types::{DhcpOption, DhcpOptionList, MacAddr};
 use crate::DEFAULT_LEASE_TIME;
 use std::collections::BTreeMap;
@@ -76,7 +78,7 @@ impl<'dhcp_options> AddrPool<'dhcp_options> {
             }
         }
 
-        println!("{:?}", Error::AllIPAddressesExhausted);
+        error!("{:?}", Error::AllIPAddressesExhausted);
         None
     }
 

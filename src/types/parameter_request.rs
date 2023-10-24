@@ -1,3 +1,5 @@
+use log::warn;
+
 #[allow(unused)]
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -101,7 +103,7 @@ impl From<u8> for ParameterRequest {
             249 => Self::ClasslessStaticRouteMicrosoft,
             252 => Self::ProxyAutodiscovery,
             unimplemented => {
-                println!("RequestedParameter {unimplemented} unimplemented");
+                warn!("RequestedParameter {unimplemented} is unimplemented");
                 Self::Unimplemented
             }
         }
